@@ -12,8 +12,8 @@ export interface PhysicsSettings {
 
 export const DEFAULT_PHYSICS: PhysicsSettings = {
   gravity: 0.12,
-  bounce: 0.75,
-  friction: 0.997,
+  bounce: 0.85,
+  friction: 0.998,
   ballRadius: 6,
   pegRadius: 6,
   pegRandomness: 2,
@@ -34,10 +34,10 @@ function randomInRange(min: number, max: number): number {
 function generateRandomPhysics(): PhysicsSettings {
   return {
     gravity: randomInRange(0.05, 0.4),
-    bounce: randomInRange(0.4, 0.85),
-    friction: randomInRange(0.985, 0.999),
-    ballRadius: Math.round(randomInRange(4, 12)),
-    pegRadius: Math.round(randomInRange(3, 10)),
+    bounce: randomInRange(0.5, 0.95),
+    friction: randomInRange(0.985, 0.998),
+    ballRadius: Math.round(randomInRange(4, 8)),
+    pegRadius: Math.round(randomInRange(3, 8)),
     pegRandomness: randomInRange(0.5, 4),
     initialVelocity: randomInRange(1, 5),
   };
@@ -87,7 +87,7 @@ export function PhysicsModal({
             <input
               type="range"
               min="0.3"
-              max="0.9"
+              max="0.95"
               step="0.01"
               value={settings.bounce}
               onChange={(e) => handleChange("bounce", parseFloat(e.target.value))}
@@ -125,7 +125,7 @@ export function PhysicsModal({
             <input
               type="range"
               min="4"
-              max="15"
+              max="8"
               step="1"
               value={settings.ballRadius}
               onChange={(e) => handleChange("ballRadius", parseFloat(e.target.value))}
@@ -144,7 +144,7 @@ export function PhysicsModal({
             <input
               type="range"
               min="3"
-              max="12"
+              max="8"
               step="1"
               value={settings.pegRadius}
               onChange={(e) => handleChange("pegRadius", parseFloat(e.target.value))}
