@@ -482,6 +482,19 @@
   color: #666;
 }
 
+.slider-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 0;
+  margin: 0.5rem 0;
+  border-top: 1px solid rgba(255, 214, 0, 0.2);
+  color: #00d4ff;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.85rem;
+  font-weight: bold;
+}
+
 .modal-buttons {
   display: flex;
   gap: 1rem;

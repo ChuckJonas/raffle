@@ -31,6 +31,13 @@ interface Ball {
 interface Peg {
   x: number;
   y: number;
+  heat: number; // 0-1, how recently/often hit
+}
+
+interface TrailPoint {
+  x: number;
+  y: number;
+  age: number; // frames since created
 }
 
 // Sound utility for bounce effects
@@ -164,6 +171,9 @@ export function PlinkoGame({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ballRef = useRef<Ball | null>(null);
   const ballsRef = useRef<Ball[]>([]); // For test mode - multiple balls
+  const trailRef = useRef<TrailPoint[]>([]); // Ball trail for visual effect
+  const pegsRef = useRef<Peg[]>([]); // Pegs with mutable heat values
+  const obstacleRef = useRef({ x: 0, direction: 1 }); // Moving obstacle at bottom
   const animationStartTimeRef = useRef<number>(0); // Track when animation started for stuck detection
   const animationRef = useRef<number | null>(null);
   const isAnimatingRef = useRef(false);
@@ -185,6 +195,9 @@ export function PlinkoGame({
     ((ball: Ball, playSound?: boolean) => Ball) | null
   >(null);
   const checkDividerCollisionRef = useRef<
+    ((ball: Ball, playSound?: boolean) => Ball) | null
+  >(null);
+  const checkObstacleCollisionRef = useRef<
     ((ball: Ball, playSound?: boolean) => Ball) | null
   >(null);
   const runAnimationRef = useRef<(() => void) | null>(null);
@@ -271,13 +284,21 @@ export function PlinkoGame({
         pegs.push({
           x: startX + col * pegSpacing,
           y: firstRowY + row * rowSpacing,
+          heat: 0, // Start cold
         });
       }
     }
     return pegs;
   }, [CANVAS_WIDTH]);
 
-  const pegs = generatePegs();
+  // Initialize pegs ref when canvas width changes
+  useEffect(() => {
+    const newPegs = generatePegs();
+    // Only reset if number of pegs changed (canvas width changed)
+    if (pegsRef.current.length !== newPegs.length) {
+      pegsRef.current = newPegs;
+    }
+  }, [generatePegs]);
 
   // Calculate number of slots - each entry gets its own slot (max 30 for display)
   // This ensures each entry (including duplicates) is shown
@@ -313,16 +334,25 @@ export function PlinkoGame({
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-      // Draw pegs with glow
+      // Draw pegs with glow and heat effect
       const pegR = physicsRef.current.pegRadius;
-      pegs.forEach((peg) => {
-        // Glow
+      const currentPegs = pegsRef.current;
+      currentPegs.forEach((peg) => {
+        // Decay heat each frame
+        peg.heat = Math.max(0, peg.heat - 0.012);
+
+        // Glow - intensifies with heat
         ctx.beginPath();
-        ctx.arc(peg.x, peg.y, pegR + 4, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(255, 214, 0, 0.2)";
+        ctx.arc(peg.x, peg.y, pegR + 4 + peg.heat * 5, 0, Math.PI * 2);
+        const glowAlpha = 0.2 + peg.heat * 0.45;
+        // Shift glow color from gold to orange/red as heat increases
+        const glowR = 255;
+        const glowG = Math.round(214 - peg.heat * 140);
+        const glowB = Math.round(peg.heat * 60);
+        ctx.fillStyle = `rgba(${glowR}, ${glowG}, ${glowB}, ${glowAlpha})`;
         ctx.fill();
 
-        // Peg
+        // Peg - color shifts from gold to orange/red with heat
         ctx.beginPath();
         ctx.arc(peg.x, peg.y, pegR, 0, Math.PI * 2);
         const pegGradient = ctx.createRadialGradient(
@@ -333,11 +363,80 @@ export function PlinkoGame({
           peg.y,
           pegR
         );
-        pegGradient.addColorStop(0, "#ffd700");
-        pegGradient.addColorStop(1, "#b8860b");
+        // Interpolate colors based on heat
+        const baseR = 255,
+          baseG = 215,
+          baseB = 0; // Gold
+        const hotR = 255,
+          hotG = 80,
+          hotB = 10; // Orange-red
+        const r = Math.round(baseR + (hotR - baseR) * peg.heat);
+        const g = Math.round(baseG + (hotG - baseG) * peg.heat);
+        const b = Math.round(baseB + (hotB - baseB) * peg.heat);
+        // Add subtle highlight when hot
+        const highlight =
+          peg.heat > 0.6 ? Math.round((peg.heat - 0.6) * 120) : 0;
+        pegGradient.addColorStop(
+          0,
+          `rgb(${Math.min(255, r + highlight)}, ${Math.min(
+            255,
+            g + highlight
+          )}, ${Math.min(255, b + highlight)})`
+        );
+        pegGradient.addColorStop(
+          1,
+          `rgb(${Math.round(r * 0.65)}, ${Math.round(g * 0.4)}, ${Math.round(
+            b * 0.4
+          )})`
+        );
         ctx.fillStyle = pegGradient;
         ctx.fill();
       });
+
+      // Draw and update moving obstacle
+      const obstacle = obstacleRef.current;
+      const p = physicsRef.current;
+      const obstacleWidth = p.obstacleWidth;
+      const obstacleHeight = 8;
+      const obstacleY = CANVAS_HEIGHT - 95; // Just above the bins
+      const obstacleSpeed = p.obstacleSpeed;
+      const obstacleMargin = 5;
+
+      // Update obstacle position
+      obstacle.x += obstacleSpeed * obstacle.direction;
+      if (obstacle.x >= CANVAS_WIDTH - obstacleWidth - obstacleMargin) {
+        obstacle.direction = -1;
+      } else if (obstacle.x <= obstacleMargin) {
+        obstacle.direction = 1;
+      }
+
+      // Draw obstacle with glow (only if speed > 0 or width > 0)
+      if (obstacleWidth > 0) {
+        ctx.beginPath();
+        ctx.roundRect(
+          obstacle.x - 3,
+          obstacleY - 3,
+          obstacleWidth + 6,
+          obstacleHeight + 6,
+          6
+        );
+        ctx.fillStyle = "rgba(0, 200, 255, 0.3)";
+        ctx.fill();
+
+        const obstacleGradient = ctx.createLinearGradient(
+          obstacle.x,
+          obstacleY,
+          obstacle.x,
+          obstacleY + obstacleHeight
+        );
+        obstacleGradient.addColorStop(0, "#00d4ff");
+        obstacleGradient.addColorStop(0.5, "#0099cc");
+        obstacleGradient.addColorStop(1, "#006688");
+        ctx.beginPath();
+        ctx.roundRect(obstacle.x, obstacleY, obstacleWidth, obstacleHeight, 4);
+        ctx.fillStyle = obstacleGradient;
+        ctx.fill();
+      }
 
       // Draw slots/bins at bottom
       const binHeight = 50;
@@ -419,6 +518,30 @@ export function PlinkoGame({
       // Draw ball with glow and trail
       if (ball) {
         const ballR = physicsRef.current.ballRadius;
+
+        // Update and draw trail
+        const trail = trailRef.current;
+        // Add current position to trail
+        trail.unshift({ x: ball.x, y: ball.y, age: 0 });
+        // Keep trail length limited
+        const maxTrailLength = 20;
+        while (trail.length > maxTrailLength) {
+          trail.pop();
+        }
+        // Age and draw trail points
+        for (let i = trail.length - 1; i >= 0; i--) {
+          const point = trail[i];
+          point.age++;
+          const alpha = Math.max(0, 1 - point.age / maxTrailLength) * 0.6;
+          const size = ballR * (1 - point.age / maxTrailLength) * 0.8;
+          if (size > 0 && alpha > 0) {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, size, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(255, 120, 80, ${alpha})`;
+            ctx.fill();
+          }
+        }
+
         // Glow effect
         ctx.beginPath();
         ctx.arc(ball.x, ball.y, ballR + 6, 0, Math.PI * 2);
@@ -458,7 +581,7 @@ export function PlinkoGame({
       ctx.textAlign = "center";
       ctx.fillText("🎱 PLINKO DROP 🎱", CANVAS_WIDTH / 2, 32);
     },
-    [pegs, numSlots, slotWidth, slotAssignments, highlightedSlot, CANVAS_WIDTH]
+    [numSlots, slotWidth, slotAssignments, highlightedSlot, CANVAS_WIDTH]
   );
 
   // Draw frame with multiple balls for test mode
@@ -476,13 +599,23 @@ export function PlinkoGame({
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-      // Draw pegs with glow
-      pegs.forEach((peg) => {
+      // Draw pegs with glow and heat effect
+      const currentPegs = pegsRef.current;
+      currentPegs.forEach((peg) => {
+        // Decay heat each frame (slower in test mode for visibility)
+        peg.heat = Math.max(0, peg.heat - 0.006);
+
+        // Glow - intensifies with heat
         ctx.beginPath();
-        ctx.arc(peg.x, peg.y, p.pegRadius + 4, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(255, 214, 0, 0.2)";
+        ctx.arc(peg.x, peg.y, p.pegRadius + 4 + peg.heat * 5, 0, Math.PI * 2);
+        const glowAlpha = 0.2 + peg.heat * 0.45;
+        const glowR = 255;
+        const glowG = Math.round(214 - peg.heat * 140);
+        const glowB = Math.round(peg.heat * 60);
+        ctx.fillStyle = `rgba(${glowR}, ${glowG}, ${glowB}, ${glowAlpha})`;
         ctx.fill();
 
+        // Peg - color shifts from gold to orange/red with heat
         ctx.beginPath();
         ctx.arc(peg.x, peg.y, p.pegRadius, 0, Math.PI * 2);
         const pegGradient = ctx.createRadialGradient(
@@ -493,8 +626,31 @@ export function PlinkoGame({
           peg.y,
           p.pegRadius
         );
-        pegGradient.addColorStop(0, "#ffd700");
-        pegGradient.addColorStop(1, "#b8860b");
+        const baseR = 255,
+          baseG = 215,
+          baseB = 0;
+        const hotR = 255,
+          hotG = 80,
+          hotB = 10;
+        const r = Math.round(baseR + (hotR - baseR) * peg.heat);
+        const g = Math.round(baseG + (hotG - baseG) * peg.heat);
+        const b = Math.round(baseB + (hotB - baseB) * peg.heat);
+        // Add subtle highlight when hot
+        const highlight =
+          peg.heat > 0.6 ? Math.round((peg.heat - 0.6) * 120) : 0;
+        pegGradient.addColorStop(
+          0,
+          `rgb(${Math.min(255, r + highlight)}, ${Math.min(
+            255,
+            g + highlight
+          )}, ${Math.min(255, b + highlight)})`
+        );
+        pegGradient.addColorStop(
+          1,
+          `rgb(${Math.round(r * 0.65)}, ${Math.round(g * 0.4)}, ${Math.round(
+            b * 0.4
+          )})`
+        );
         ctx.fillStyle = pegGradient;
         ctx.fill();
       });
@@ -506,6 +662,50 @@ export function PlinkoGame({
           slotCounts[ball.landedSlot]++;
         }
       });
+
+      // Draw and update moving obstacle
+      const obstacle = obstacleRef.current;
+      const obstacleWidth = p.obstacleWidth;
+      const obstacleHeight = 8;
+      const obstacleY = CANVAS_HEIGHT - 95;
+      const obstacleSpeed = p.obstacleSpeed;
+      const obstacleMargin = 5;
+
+      // Update obstacle position
+      obstacle.x += obstacleSpeed * obstacle.direction;
+      if (obstacle.x >= CANVAS_WIDTH - obstacleWidth - obstacleMargin) {
+        obstacle.direction = -1;
+      } else if (obstacle.x <= obstacleMargin) {
+        obstacle.direction = 1;
+      }
+
+      // Draw obstacle with glow (only if width > 0)
+      if (obstacleWidth > 0) {
+        ctx.beginPath();
+        ctx.roundRect(
+          obstacle.x - 3,
+          obstacleY - 3,
+          obstacleWidth + 6,
+          obstacleHeight + 6,
+          6
+        );
+        ctx.fillStyle = "rgba(0, 200, 255, 0.3)";
+        ctx.fill();
+
+        const obstacleGradient = ctx.createLinearGradient(
+          obstacle.x,
+          obstacleY,
+          obstacle.x,
+          obstacleY + obstacleHeight
+        );
+        obstacleGradient.addColorStop(0, "#00d4ff");
+        obstacleGradient.addColorStop(0.5, "#0099cc");
+        obstacleGradient.addColorStop(1, "#006688");
+        ctx.beginPath();
+        ctx.roundRect(obstacle.x, obstacleY, obstacleWidth, obstacleHeight, 4);
+        ctx.fillStyle = obstacleGradient;
+        ctx.fill();
+      }
 
       // Draw slots/bins at bottom with counts
       const binHeight = 50;
@@ -595,13 +795,15 @@ export function PlinkoGame({
         32
       );
     },
-    [pegs, numSlots, slotWidth, CANVAS_WIDTH]
+    [numSlots, slotWidth, CANVAS_WIDTH]
   );
 
   const checkPegCollision = useCallback(
     (ball: Ball, playSound: boolean = true): Ball => {
       const p = physicsRef.current;
-      for (const peg of pegs) {
+      const currentPegs = pegsRef.current;
+      for (let i = 0; i < currentPegs.length; i++) {
+        const peg = currentPegs[i];
         const dx = ball.x - peg.x;
         const dy = ball.y - peg.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
@@ -612,6 +814,10 @@ export function PlinkoGame({
           const impactVelocity = Math.sqrt(
             ball.vx * ball.vx + ball.vy * ball.vy
           );
+
+          // Increase peg heat on collision - more impact = more heat
+          const heatIncrease = Math.min(0.8, impactVelocity * 0.1 + 0.2);
+          currentPegs[i].heat = Math.min(1, peg.heat + heatIncrease);
 
           // Normalize collision vector
           const nx = dx / distance;
@@ -638,7 +844,84 @@ export function PlinkoGame({
       }
       return ball;
     },
-    [pegs]
+    []
+  );
+
+  // Check collision with moving obstacle
+  const checkObstacleCollision = useCallback(
+    (ball: Ball, playSound: boolean = true): Ball => {
+      const p = physicsRef.current;
+      const obstacle = obstacleRef.current;
+      const obstacleWidth = p.obstacleWidth;
+      const obstacleHeight = 8;
+      const obstacleY = CANVAS_HEIGHT - 95;
+
+      // Skip collision if obstacle is disabled (width = 0)
+      if (obstacleWidth <= 0) return ball;
+
+      // Check if ball is near obstacle vertically
+      if (
+        ball.y + p.ballRadius < obstacleY ||
+        ball.y - p.ballRadius > obstacleY + obstacleHeight
+      ) {
+        return ball;
+      }
+
+      // Check horizontal overlap
+      if (
+        ball.x + p.ballRadius < obstacle.x ||
+        ball.x - p.ballRadius > obstacle.x + obstacleWidth
+      ) {
+        return ball;
+      }
+
+      // Collision detected!
+      const impactVelocity = Math.sqrt(ball.vx * ball.vx + ball.vy * ball.vy);
+
+      // Determine which side was hit
+      const ballCenterX = ball.x;
+      const obstacleCenterX = obstacle.x + obstacleWidth / 2;
+      const ballCenterY = ball.y;
+      const obstacleCenterY = obstacleY + obstacleHeight / 2;
+
+      // Calculate overlap on each axis
+      const overlapX =
+        p.ballRadius +
+        obstacleWidth / 2 -
+        Math.abs(ballCenterX - obstacleCenterX);
+      const overlapY =
+        p.ballRadius +
+        obstacleHeight / 2 -
+        Math.abs(ballCenterY - obstacleCenterY);
+
+      if (overlapY < overlapX) {
+        // Hit top or bottom
+        if (ballCenterY < obstacleCenterY) {
+          ball.y = obstacleY - p.ballRadius;
+        } else {
+          ball.y = obstacleY + obstacleHeight + p.ballRadius;
+        }
+        ball.vy *= -p.bounce;
+        // Add some of the obstacle's movement to the ball
+        ball.vx += obstacle.direction * 1.5;
+      } else {
+        // Hit left or right side
+        if (ballCenterX < obstacleCenterX) {
+          ball.x = obstacle.x - p.ballRadius;
+        } else {
+          ball.x = obstacle.x + obstacleWidth + p.ballRadius;
+        }
+        ball.vx *= -p.bounce;
+      }
+
+      // Play bounce sound
+      if (playSound && audioContextRef.current && impactVelocity > 1) {
+        createBounceSound(audioContextRef.current, impactVelocity * 0.8);
+      }
+
+      return ball;
+    },
+    []
   );
 
   // Check collision with bin dividers
@@ -728,6 +1011,10 @@ export function PlinkoGame({
     checkDividerCollisionRef.current = checkDividerCollision;
   }, [checkDividerCollision]);
 
+  useEffect(() => {
+    checkObstacleCollisionRef.current = checkObstacleCollision;
+  }, [checkObstacleCollision]);
+
   // Animation loop - uses refs to avoid dependency issues and prevent restarts
   const runAnimation = useCallback(() => {
     const canvas = canvasRef.current;
@@ -735,6 +1022,7 @@ export function PlinkoGame({
     const drawFn = drawFrameRef.current;
     const checkCollisionFn = checkPegCollisionRef.current;
     const checkDividerFn = checkDividerCollisionRef.current;
+    const checkObstacleFn = checkObstacleCollisionRef.current;
     const animateFn = runAnimationRef.current;
 
     if (
@@ -745,6 +1033,7 @@ export function PlinkoGame({
       !drawFn ||
       !checkCollisionFn ||
       !checkDividerFn ||
+      !checkObstacleFn ||
       !animateFn
     )
       return;
@@ -814,6 +1103,9 @@ export function PlinkoGame({
     // Check peg collisions using ref
     checkCollisionFn(ball);
 
+    // Check obstacle collision
+    checkObstacleFn(ball);
+
     // Check divider collisions
     checkDividerFn(ball);
 
@@ -879,6 +1171,7 @@ export function PlinkoGame({
     const drawFn = drawFrameMultiRef.current;
     const checkCollisionFn = checkPegCollisionRef.current;
     const checkDividerFn = checkDividerCollisionRef.current;
+    const checkObstacleFn = checkObstacleCollisionRef.current;
     const animateFn = runTestAnimationRef.current;
 
     if (
@@ -888,6 +1181,7 @@ export function PlinkoGame({
       !drawFn ||
       !checkCollisionFn ||
       !checkDividerFn ||
+      !checkObstacleFn ||
       !animateFn
     )
       return;
@@ -942,6 +1236,7 @@ export function PlinkoGame({
 
       // Check collisions (no sound in test mode)
       checkCollisionFn(ball, false);
+      checkObstacleFn(ball, false);
       checkDividerFn(ball, false);
 
       // Check if ball reached bottom
@@ -1027,6 +1322,13 @@ export function PlinkoGame({
       vx: (Math.random() - 0.5) * p.initialVelocity, // Random initial horizontal
       vy: 0.5, // Gentle initial drop
     };
+    trailRef.current = []; // Clear trail
+    // Reset peg heat
+    pegsRef.current.forEach((peg) => {
+      peg.heat = 0;
+    });
+    // Reset obstacle to center
+    obstacleRef.current = { x: canvasWidthRef.current / 2 - 30, direction: 1 };
     onDisplayedWinnerChangeRef.current("");
     onHighlightedSlotChangeRef.current(null); // Reset landed slot
     winnerRef.current = null; // Reset winner
@@ -1090,6 +1392,12 @@ export function PlinkoGame({
     }
 
     ballsRef.current = balls;
+    // Reset peg heat for fresh test
+    pegsRef.current.forEach((peg) => {
+      peg.heat = 0;
+    });
+    // Reset obstacle to center
+    obstacleRef.current = { x: canvasWidthRef.current / 2 - 30, direction: 1 };
     animationStartTimeRef.current = Date.now(); // Track when animation started
     isAnimatingRef.current = true;
 
