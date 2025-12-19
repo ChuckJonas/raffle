@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useCallback, useMemo } from "react";
 import type { Entry } from "../App";
 import type { PhysicsSettings } from "./PhysicsModal";
 import "./PlinkoGame.css";
@@ -9,6 +9,13 @@ interface PlinkoGameProps {
   isPlaying: boolean;
   onComplete: (winner: Entry) => void;
   physics: PhysicsSettings;
+  displayedWinner: string;
+  onDisplayedWinnerChange: (name: string) => void;
+  highlightedSlot: number | null;
+  onHighlightedSlotChange: (slot: number | null) => void;
+  testMode?: boolean;
+  testBallCount?: number;
+  onTestComplete?: (results: number[]) => void;
 }
 
 interface Ball {
@@ -16,6 +23,9 @@ interface Ball {
   y: number;
   vx: number;
   vy: number;
+  id?: number;
+  landed?: boolean;
+  landedSlot?: number;
 }
 
 interface Peg {
@@ -23,34 +33,140 @@ interface Peg {
   y: number;
 }
 
+// Sound utility for bounce effects
+const createBounceSound = (audioContext: AudioContext, velocity: number) => {
+  // Map velocity to frequency (higher velocity = higher pitch)
+  // Velocity typically ranges from 0-15, map to 200-800 Hz
+  const baseFreq = 300;
+  const freqRange = 500;
+  const normalizedVelocity = Math.min(velocity / 12, 1);
+  const frequency = baseFreq + normalizedVelocity * freqRange;
+
+  // Create oscillator
+  const oscillator = audioContext.createOscillator();
+  const gainNode = audioContext.createGain();
+
+  // Use triangle wave for a softer, more pleasant sound
+  oscillator.type = "triangle";
+  oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+
+  // Quick decay envelope - louder for faster impacts
+  const volume = 0.08 + normalizedVelocity * 0.12;
+  gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(
+    0.001,
+    audioContext.currentTime + 0.1
+  );
+
+  // Connect and play
+  oscillator.connect(gainNode);
+  gainNode.connect(audioContext.destination);
+
+  oscillator.start(audioContext.currentTime);
+  oscillator.stop(audioContext.currentTime + 0.1);
+};
+
+const createWinSound = (audioContext: AudioContext) => {
+  // Play a cheerful winning jingle
+  const notes = [523.25, 659.25, 783.99, 1046.5]; // C5, E5, G5, C6
+
+  notes.forEach((freq, i) => {
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(freq, audioContext.currentTime);
+
+    const startTime = audioContext.currentTime + i * 0.1;
+    gainNode.gain.setValueAtTime(0, startTime);
+    gainNode.gain.linearRampToValueAtTime(0.15, startTime + 0.05);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, startTime + 0.3);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    oscillator.start(startTime);
+    oscillator.stop(startTime + 0.3);
+  });
+};
+
 export function PlinkoGame({
   entries,
   shuffledEntries,
   isPlaying,
   onComplete,
   physics,
+  displayedWinner,
+  onDisplayedWinnerChange,
+  highlightedSlot,
+  onHighlightedSlotChange,
+  testMode = false,
+  testBallCount = 100,
+  onTestComplete,
 }: PlinkoGameProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ballRef = useRef<Ball | null>(null);
+  const ballsRef = useRef<Ball[]>([]); // For test mode - multiple balls
   const animationRef = useRef<number | null>(null);
   const isAnimatingRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
+  const onTestCompleteRef = useRef(onTestComplete);
   const shuffledEntriesRef = useRef(shuffledEntries);
   const physicsRef = useRef(physics);
+  const canvasWidthRef = useRef(750); // Will be updated when CANVAS_WIDTH changes
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const testModeRef = useRef(testMode);
+  const testBallCountRef = useRef(testBallCount);
   const drawFrameRef = useRef<
     ((ctx: CanvasRenderingContext2D, ball: Ball | null) => void) | null
   >(null);
-  const checkPegCollisionRef = useRef<((ball: Ball) => Ball) | null>(null);
-  const checkDividerCollisionRef = useRef<((ball: Ball) => Ball) | null>(null);
+  const drawFrameMultiRef = useRef<
+    ((ctx: CanvasRenderingContext2D, balls: Ball[]) => void) | null
+  >(null);
+  const checkPegCollisionRef = useRef<
+    ((ball: Ball, playSound?: boolean) => Ball) | null
+  >(null);
+  const checkDividerCollisionRef = useRef<
+    ((ball: Ball, playSound?: boolean) => Ball) | null
+  >(null);
   const runAnimationRef = useRef<(() => void) | null>(null);
-  const [displayName, setDisplayName] = useState<string>("");
-  const [landedSlot, setLandedSlot] = useState<number | null>(null);
+  const runTestAnimationRef = useRef<(() => void) | null>(null);
+  const onDisplayedWinnerChangeRef = useRef(onDisplayedWinnerChange);
+  const onHighlightedSlotChangeRef = useRef(onHighlightedSlotChange);
   const winnerRef = useRef<Entry | null>(null);
+
+  // Initialize audio context on first interaction
+  const getAudioContext = useCallback(() => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContext();
+    }
+    return audioContextRef.current;
+  }, []);
 
   // Keep refs updated to avoid stale closures
   useEffect(() => {
     onCompleteRef.current = onComplete;
   }, [onComplete]);
+
+  useEffect(() => {
+    onTestCompleteRef.current = onTestComplete;
+  }, [onTestComplete]);
+
+  useEffect(() => {
+    testModeRef.current = testMode;
+  }, [testMode]);
+
+  useEffect(() => {
+    testBallCountRef.current = testBallCount;
+  }, [testBallCount]);
+
+  useEffect(() => {
+    onDisplayedWinnerChangeRef.current = onDisplayedWinnerChange;
+  }, [onDisplayedWinnerChange]);
+
+  useEffect(() => {
+    onHighlightedSlotChangeRef.current = onHighlightedSlotChange;
+  }, [onHighlightedSlotChange]);
 
   useEffect(() => {
     shuffledEntriesRef.current = shuffledEntries;
@@ -60,10 +176,19 @@ export function PlinkoGame({
     physicsRef.current = physics;
   }, [physics]);
 
-  const CANVAS_WIDTH = 500;
-  const CANVAS_HEIGHT = 700;
-  const PEG_RADIUS = 6;
-  const ROWS = 12;
+  // Use shuffled entries from props, or entries for display when not playing
+  const displayEntries = shuffledEntries.length > 0 ? shuffledEntries : entries;
+
+  // Dynamic width based on entry count - go wide when > 10 entries
+  const isWideMode = displayEntries.length > 10;
+  const CANVAS_WIDTH = isWideMode ? 1200 : 750;
+  const CANVAS_HEIGHT = 800;
+  const ROWS = 15;
+
+  // Keep canvas width ref updated for animation loop
+  useEffect(() => {
+    canvasWidthRef.current = CANVAS_WIDTH;
+  }, [CANVAS_WIDTH]);
 
   // Generate pegs in classic Plinko staggered pattern
   const generatePegs = useCallback((): Peg[] => {
@@ -92,16 +217,13 @@ export function PlinkoGame({
       }
     }
     return pegs;
-  }, []);
+  }, [CANVAS_WIDTH]);
 
   const pegs = generatePegs();
 
-  // Use shuffled entries from props, or entries for display when not playing
-  const displayEntries = shuffledEntries.length > 0 ? shuffledEntries : entries;
-
-  // Calculate number of slots - each entry gets its own slot (max 12 for display)
+  // Calculate number of slots - each entry gets its own slot (max 30 for display)
   // This ensures each entry (including duplicates) is shown
-  const numSlots = Math.min(Math.max(displayEntries.length, 2), 12);
+  const numSlots = Math.min(Math.max(displayEntries.length, 2), 30);
   const slotWidth = CANVAS_WIDTH / numSlots;
 
   // Create slot assignments - show entries directly (first N entries)
@@ -118,7 +240,7 @@ export function PlinkoGame({
     // Random start position near center with some variation
     const randomOffset = (Math.random() - 0.5) * 100;
     return Math.max(50, Math.min(CANVAS_WIDTH - 50, centerX + randomOffset));
-  }, []);
+  }, [CANVAS_WIDTH]);
 
   const drawFrame = useCallback(
     (ctx: CanvasRenderingContext2D, ball: Ball | null) => {
@@ -134,23 +256,24 @@ export function PlinkoGame({
       ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
       // Draw pegs with glow
+      const pegR = physicsRef.current.pegRadius;
       pegs.forEach((peg) => {
         // Glow
         ctx.beginPath();
-        ctx.arc(peg.x, peg.y, PEG_RADIUS + 4, 0, Math.PI * 2);
+        ctx.arc(peg.x, peg.y, pegR + 4, 0, Math.PI * 2);
         ctx.fillStyle = "rgba(255, 214, 0, 0.2)";
         ctx.fill();
 
         // Peg
         ctx.beginPath();
-        ctx.arc(peg.x, peg.y, PEG_RADIUS, 0, Math.PI * 2);
+        ctx.arc(peg.x, peg.y, pegR, 0, Math.PI * 2);
         const pegGradient = ctx.createRadialGradient(
           peg.x - 2,
           peg.y - 2,
           0,
           peg.x,
           peg.y,
-          PEG_RADIUS
+          pegR
         );
         pegGradient.addColorStop(0, "#ffd700");
         pegGradient.addColorStop(1, "#b8860b");
@@ -166,7 +289,7 @@ export function PlinkoGame({
 
       for (let i = 0; i < numSlots; i++) {
         const x = i * slotWidth;
-        const isLandedSlot = landedSlot === i;
+        const isLandedSlot = highlightedSlot === i;
 
         // Slot background - lights up when ball lands
         if (isLandedSlot) {
@@ -277,19 +400,161 @@ export function PlinkoGame({
       ctx.textAlign = "center";
       ctx.fillText("🎱 PLINKO DROP 🎱", CANVAS_WIDTH / 2, 32);
     },
-    [pegs, numSlots, slotWidth, slotAssignments, landedSlot]
+    [pegs, numSlots, slotWidth, slotAssignments, highlightedSlot, CANVAS_WIDTH]
+  );
+
+  // Draw frame with multiple balls for test mode
+  const drawFrameMulti = useCallback(
+    (ctx: CanvasRenderingContext2D, balls: Ball[]) => {
+      const p = physicsRef.current;
+      // Clear canvas
+      ctx.fillStyle = "#1a1a2e";
+      ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      // Draw gradient background
+      const gradient = ctx.createLinearGradient(0, 0, 0, CANVAS_HEIGHT);
+      gradient.addColorStop(0, "#1a1a2e");
+      gradient.addColorStop(1, "#16213e");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      // Draw pegs with glow
+      pegs.forEach((peg) => {
+        ctx.beginPath();
+        ctx.arc(peg.x, peg.y, p.pegRadius + 4, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255, 214, 0, 0.2)";
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(peg.x, peg.y, p.pegRadius, 0, Math.PI * 2);
+        const pegGradient = ctx.createRadialGradient(
+          peg.x - 2,
+          peg.y - 2,
+          0,
+          peg.x,
+          peg.y,
+          p.pegRadius
+        );
+        pegGradient.addColorStop(0, "#ffd700");
+        pegGradient.addColorStop(1, "#b8860b");
+        ctx.fillStyle = pegGradient;
+        ctx.fill();
+      });
+
+      // Count landed balls per slot for display
+      const slotCounts: number[] = new Array(numSlots).fill(0);
+      balls.forEach((ball) => {
+        if (ball.landed && ball.landedSlot !== undefined) {
+          slotCounts[ball.landedSlot]++;
+        }
+      });
+
+      // Draw slots/bins at bottom with counts
+      const binHeight = 50;
+      const dividerExtension = 20;
+      const slotY = CANVAS_HEIGHT - binHeight;
+      const dividerWidth = 3;
+
+      for (let i = 0; i < numSlots; i++) {
+        const x = i * slotWidth;
+        const count = slotCounts[i];
+
+        // Color intensity based on count
+        const intensity = Math.min(count / 20, 1);
+        ctx.fillStyle = `rgba(255, 214, 0, ${0.05 + intensity * 0.3})`;
+        ctx.fillRect(
+          x + dividerWidth,
+          slotY,
+          slotWidth - dividerWidth,
+          binHeight
+        );
+
+        // Left divider wall
+        ctx.fillStyle = "#ffd700";
+        ctx.fillRect(
+          x,
+          slotY - dividerExtension,
+          dividerWidth,
+          binHeight + dividerExtension
+        );
+
+        // Count display
+        if (count > 0) {
+          ctx.fillStyle = "#fff";
+          ctx.font = 'bold 14px "Space Mono", monospace';
+          ctx.textAlign = "center";
+          ctx.fillText(count.toString(), x + slotWidth / 2, slotY + 35);
+        }
+      }
+
+      // Last divider on the right
+      ctx.fillStyle = "#ffd700";
+      ctx.fillRect(
+        CANVAS_WIDTH - dividerWidth,
+        slotY - dividerExtension,
+        dividerWidth,
+        binHeight + dividerExtension
+      );
+
+      // Draw all balls
+      balls.forEach((ball) => {
+        if (!ball.landed) {
+          // Active ball - red
+          ctx.beginPath();
+          ctx.arc(ball.x, ball.y, p.ballRadius + 3, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(255, 99, 71, 0.3)";
+          ctx.fill();
+
+          const ballGradient = ctx.createRadialGradient(
+            ball.x - 1,
+            ball.y - 1,
+            0,
+            ball.x,
+            ball.y,
+            p.ballRadius
+          );
+          ballGradient.addColorStop(0, "#ff6b6b");
+          ballGradient.addColorStop(0.7, "#ee4444");
+          ballGradient.addColorStop(1, "#cc2222");
+
+          ctx.beginPath();
+          ctx.arc(ball.x, ball.y, p.ballRadius, 0, Math.PI * 2);
+          ctx.fillStyle = ballGradient;
+          ctx.fill();
+        }
+      });
+
+      // Draw title area with ball count
+      ctx.fillStyle = "rgba(0, 0, 0, 0.3)";
+      ctx.fillRect(0, 0, CANVAS_WIDTH, 50);
+      ctx.fillStyle = "#ffd700";
+      ctx.font = 'bold 20px "Fredoka", sans-serif';
+      ctx.textAlign = "center";
+      const landedBalls = balls.filter((b) => b.landed).length;
+      ctx.fillText(
+        `🎱 TEST MODE: ${landedBalls}/${balls.length} landed 🎱`,
+        CANVAS_WIDTH / 2,
+        32
+      );
+    },
+    [pegs, numSlots, slotWidth, CANVAS_WIDTH]
   );
 
   const checkPegCollision = useCallback(
-    (ball: Ball): Ball => {
+    (ball: Ball, playSound: boolean = true): Ball => {
       const p = physicsRef.current;
       for (const peg of pegs) {
         const dx = ball.x - peg.x;
         const dy = ball.y - peg.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
-        const minDist = p.ballRadius + PEG_RADIUS;
+        const minDist = p.ballRadius + p.pegRadius;
 
         if (distance < minDist) {
+          // Calculate impact velocity before collision for sound
+          const impactVelocity = Math.sqrt(
+            ball.vx * ball.vx + ball.vy * ball.vy
+          );
+
           // Normalize collision vector
           const nx = dx / distance;
           const ny = dy / distance;
@@ -306,6 +571,11 @@ export function PlinkoGame({
 
           // Add slight randomness to make it more interesting
           ball.vx += (Math.random() - 0.5) * p.pegRandomness;
+
+          // Play bounce sound based on impact velocity (throttled in test mode)
+          if (playSound && audioContextRef.current && impactVelocity > 1) {
+            createBounceSound(audioContextRef.current, impactVelocity);
+          }
         }
       }
       return ball;
@@ -315,7 +585,7 @@ export function PlinkoGame({
 
   // Check collision with bin dividers
   const checkDividerCollision = useCallback(
-    (ball: Ball): Ball => {
+    (ball: Ball, playSound: boolean = true): Ball => {
       const p = physicsRef.current;
       const binHeight = 50;
       const dividerExtension = 20;
@@ -341,6 +611,11 @@ export function PlinkoGame({
         const distance = Math.sqrt(dx * dx + dy * dy);
 
         if (distance < p.ballRadius) {
+          // Calculate impact velocity for sound
+          const impactVelocity = Math.sqrt(
+            ball.vx * ball.vx + ball.vy * ball.vy
+          );
+
           // Collision! Push ball out and bounce
           if (distance > 0) {
             const nx = dx / distance;
@@ -366,6 +641,11 @@ export function PlinkoGame({
             }
             ball.vx *= -p.bounce;
           }
+
+          // Play a lower-pitched sound for divider hits
+          if (playSound && audioContextRef.current && impactVelocity > 1) {
+            createBounceSound(audioContextRef.current, impactVelocity * 0.5);
+          }
         }
       }
       return ball;
@@ -377,6 +657,10 @@ export function PlinkoGame({
   useEffect(() => {
     drawFrameRef.current = drawFrame;
   }, [drawFrame]);
+
+  useEffect(() => {
+    drawFrameMultiRef.current = drawFrameMulti;
+  }, [drawFrameMulti]);
 
   useEffect(() => {
     checkPegCollisionRef.current = checkPegCollision;
@@ -418,13 +702,14 @@ export function PlinkoGame({
     ball.x += ball.vx;
     ball.y += ball.vy;
 
-    // Wall collisions
+    // Wall collisions - use ref for canvas width
+    const canvasW = canvasWidthRef.current;
     if (ball.x < p.ballRadius) {
       ball.x = p.ballRadius;
       ball.vx *= -p.bounce;
     }
-    if (ball.x > CANVAS_WIDTH - p.ballRadius) {
-      ball.x = CANVAS_WIDTH - p.ballRadius;
+    if (ball.x > canvasW - p.ballRadius) {
+      ball.x = canvasW - p.ballRadius;
       ball.vx *= -p.bounce;
     }
 
@@ -444,29 +729,37 @@ export function PlinkoGame({
 
       // Calculate which slot the ball is in - THIS DETERMINES THE WINNER!
       const shuffled = shuffledEntriesRef.current;
-      const currentNumSlots = Math.min(Math.max(shuffled.length, 2), 12);
-      const currentSlotWidth = CANVAS_WIDTH / currentNumSlots;
+      const currentNumSlots = Math.min(Math.max(shuffled.length, 2), 30);
+      const currentCanvasWidth = shuffled.length > 10 ? 1200 : 750;
+      const currentSlotWidth = currentCanvasWidth / currentNumSlots;
       const slotIndex = Math.max(
         0,
         Math.min(Math.floor(ball.x / currentSlotWidth), currentNumSlots - 1)
       );
 
       // Light up the slot
-      setLandedSlot(slotIndex);
+      onHighlightedSlotChangeRef.current(slotIndex);
 
       // The winner is whoever is in the slot the ball landed in!
       const landedEntry = shuffled[slotIndex];
       if (landedEntry) {
         winnerRef.current = landedEntry;
-        setDisplayName(landedEntry.name);
+        onDisplayedWinnerChangeRef.current(landedEntry.name);
       }
 
       // Small bounce at bottom then stop
       if (Math.abs(ball.vy) > 1) {
         ball.vy *= -0.3;
+        // Play a soft thud for bottom bounces
+        if (audioContextRef.current) {
+          createBounceSound(audioContextRef.current, 3);
+        }
         animationRef.current = requestAnimationFrame(animateFn);
       } else {
-        // Animation complete - pass the actual winner!
+        // Animation complete - play win sound and pass the actual winner!
+        if (audioContextRef.current) {
+          createWinSound(audioContextRef.current);
+        }
         isAnimatingRef.current = false;
         const winner = winnerRef.current;
         setTimeout(() => {
@@ -481,16 +774,131 @@ export function PlinkoGame({
     animationRef.current = requestAnimationFrame(animateFn);
   }, []); // No dependencies - uses refs for everything
 
+  // Test mode animation loop - handles multiple balls
+  const runTestAnimation = useCallback(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    const drawFn = drawFrameMultiRef.current;
+    const checkCollisionFn = checkPegCollisionRef.current;
+    const checkDividerFn = checkDividerCollisionRef.current;
+    const animateFn = runTestAnimationRef.current;
+
+    if (
+      !canvas ||
+      !ctx ||
+      !isAnimatingRef.current ||
+      !drawFn ||
+      !checkCollisionFn ||
+      !checkDividerFn ||
+      !animateFn
+    )
+      return;
+
+    const balls = ballsRef.current;
+    const p = physicsRef.current;
+    const canvasW = canvasWidthRef.current;
+
+    // Sound throttle - only play occasional sounds in test mode
+    const soundThrottle = Math.random() < 0.02; // 2% chance
+
+    // Update each ball
+    balls.forEach((ball) => {
+      if (ball.landed) return;
+
+      // Apply physics
+      ball.vy += p.gravity;
+      ball.vx *= p.friction;
+      ball.vy *= p.friction;
+
+      ball.x += ball.vx;
+      ball.y += ball.vy;
+
+      // Wall collisions
+      if (ball.x < p.ballRadius) {
+        ball.x = p.ballRadius;
+        ball.vx *= -p.bounce;
+      }
+      if (ball.x > canvasW - p.ballRadius) {
+        ball.x = canvasW - p.ballRadius;
+        ball.vx *= -p.bounce;
+      }
+
+      // Check collisions (with throttled sound)
+      checkCollisionFn(ball, soundThrottle);
+      checkDividerFn(ball, soundThrottle);
+
+      // Check if ball reached bottom
+      const binFloor = CANVAS_HEIGHT - 50 + 30;
+      if (ball.y >= binFloor - p.ballRadius && !ball.landed) {
+        ball.y = binFloor - p.ballRadius;
+
+        // Small bounce at bottom
+        if (Math.abs(ball.vy) > 1) {
+          ball.vy *= -0.3;
+        } else {
+          // Ball has landed - use the numSlots from entries, not ball count
+          const currentSlotWidth = canvasW / numSlots;
+          const slotIndex = Math.max(
+            0,
+            Math.min(Math.floor(ball.x / currentSlotWidth), numSlots - 1)
+          );
+          ball.landed = true;
+          ball.landedSlot = slotIndex;
+        }
+      }
+    });
+
+    // Draw all balls
+    drawFn(ctx, balls);
+
+    // Check if all balls have landed
+    const allLanded = balls.every((b) => b.landed);
+    if (allLanded) {
+      isAnimatingRef.current = false;
+
+      // Calculate results
+      const results: number[] = new Array(numSlots).fill(0);
+      balls.forEach((ball) => {
+        if (ball.landedSlot !== undefined && ball.landedSlot < numSlots) {
+          results[ball.landedSlot]++;
+        }
+      });
+
+      // Play completion sound
+      if (audioContextRef.current) {
+        createWinSound(audioContextRef.current);
+      }
+
+      // Call completion callback
+      if (onTestCompleteRef.current) {
+        setTimeout(() => {
+          onTestCompleteRef.current?.(results);
+        }, 500);
+      }
+      return;
+    }
+
+    animationRef.current = requestAnimationFrame(animateFn);
+  }, [numSlots]); // Minimal dependencies
+
   // Keep runAnimation ref updated
   useEffect(() => {
     runAnimationRef.current = runAnimation;
   }, [runAnimation]);
+
+  // Keep runTestAnimation ref updated
+  useEffect(() => {
+    runTestAnimationRef.current = runTestAnimation;
+  }, [runTestAnimation]);
 
   // Function to start the animation - called from effect
   const startAnimation = useCallback(() => {
     // Check we have enough entries
     const shuffled = shuffledEntriesRef.current;
     if (shuffled.length < 2) return;
+
+    // Initialize audio context (must be done after user interaction)
+    getAudioContext();
 
     // Random start position - no bias! The physics determine the winner
     const startX = calculateStartX();
@@ -502,8 +910,8 @@ export function PlinkoGame({
       vx: (Math.random() - 0.5) * p.initialVelocity, // Random initial horizontal
       vy: 0.5, // Gentle initial drop
     };
-    setDisplayName("");
-    setLandedSlot(null); // Reset landed slot
+    onDisplayedWinnerChangeRef.current("");
+    onHighlightedSlotChangeRef.current(null); // Reset landed slot
     winnerRef.current = null; // Reset winner
     isAnimatingRef.current = true;
 
@@ -512,13 +920,74 @@ export function PlinkoGame({
     if (animateFn) {
       animateFn();
     }
-  }, [calculateStartX]);
+  }, [calculateStartX, getAudioContext]);
+
+  // Function to start test animation with multiple balls
+  const startTestAnimation = useCallback(() => {
+    // Initialize audio context
+    getAudioContext();
+
+    const p = physicsRef.current;
+    const ballCount = testBallCountRef.current;
+    const canvasW = canvasWidthRef.current;
+
+    // Create all balls with positions spread across the board for fair distribution
+    const balls: Ball[] = [];
+    // Leave 12% margin on each side to avoid balls falling straight down edges
+    const marginPercent = 0.12;
+    const minX = canvasW * marginPercent;
+    const maxX = canvasW * (1 - marginPercent);
+    const dropRange = maxX - minX;
+
+    for (let i = 0; i < ballCount; i++) {
+      // Distribute starting positions uniformly across the valid range
+      // Add some randomness but ensure coverage of the full width
+      const baseX = minX + (i / ballCount) * dropRange; // Spread evenly
+      const randomOffset = (Math.random() - 0.5) * (dropRange / ballCount) * 2; // Small random offset
+      const startX = Math.max(minX, Math.min(maxX, baseX + randomOffset));
+
+      // Stagger the drop timing by varying starting Y position
+      const startY = 55 - Math.random() * 250; // Start above the canvas
+
+      // Random initial velocity - can push ball left or right
+      const vx = (Math.random() - 0.5) * p.initialVelocity * 1.5;
+
+      balls.push({
+        id: i,
+        x: startX,
+        y: startY,
+        vx: vx,
+        vy: 0.3 + Math.random() * 0.5, // Always falling down
+        landed: false,
+      });
+    }
+
+    // Shuffle the balls array so they don't drop in order from left to right
+    for (let i = balls.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [balls[i], balls[j]] = [balls[j], balls[i]];
+    }
+
+    ballsRef.current = balls;
+    isAnimatingRef.current = true;
+
+    // Start the test animation loop
+    const animateFn = runTestAnimationRef.current;
+    if (animateFn) {
+      animateFn();
+    }
+  }, [getAudioContext]);
 
   // Start animation when isPlaying becomes true
   useEffect(() => {
     if (isPlaying && !isAnimatingRef.current) {
-      // Use setTimeout to avoid setState-in-effect warning
-      setTimeout(() => startAnimation(), 0);
+      if (testModeRef.current) {
+        // Test mode - drop multiple balls
+        setTimeout(() => startTestAnimation(), 0);
+      } else {
+        // Normal mode - single ball
+        setTimeout(() => startAnimation(), 0);
+      }
     }
 
     // Stop animation when isPlaying becomes false
@@ -528,8 +997,10 @@ export function PlinkoGame({
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
       }
+      // Clear test balls
+      ballsRef.current = [];
     }
-  }, [isPlaying, startAnimation]);
+  }, [isPlaying, startAnimation, startTestAnimation]);
 
   // Cleanup on unmount only
   useEffect(() => {
@@ -558,8 +1029,8 @@ export function PlinkoGame({
         height={CANVAS_HEIGHT}
         className="plinko-canvas"
       />
-      {displayName && !isPlaying && (
-        <div className="winner-display">🏆 {displayName} 🏆</div>
+      {displayedWinner && !isPlaying && (
+        <div className="winner-display">🏆 {displayedWinner} 🏆</div>
       )}
       {entries.length < 2 && (
         <div className="empty-state">

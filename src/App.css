@@ -42,6 +42,22 @@
   margin: 0 auto;
 }
 
+/* Wide mode - when more than 10 entries, stack vertically */
+.main-content.wide-mode {
+  grid-template-columns: 1fr;
+  max-width: 1300px;
+}
+
+.main-content.wide-mode .left-panel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.main-content.wide-mode .right-panel {
+  order: -1;
+}
+
 .left-panel {
   display: flex;
   flex-direction: column;
@@ -50,8 +66,8 @@
 
 .right-panel {
   display: flex;
-  justify-content: center;
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: center;
 }
 
 .action-buttons {
@@ -96,6 +112,16 @@
   font-size: 1.2rem;
 }
 
+.draw-button {
+  width: 100%;
+  max-width: 750px;
+  margin-bottom: 1rem;
+}
+
+.main-content.wide-mode .draw-button {
+  max-width: 1200px;
+}
+
 .btn-secondary {
   background: rgba(255, 214, 0, 0.1);
   color: #ffd700;
@@ -130,6 +156,18 @@
   color: #fff;
 }
 
+.btn-test {
+  background: rgba(155, 89, 182, 0.1);
+  color: #9b59b6;
+  border: 2px solid rgba(155, 89, 182, 0.3);
+}
+
+.btn-test:hover:not(:disabled) {
+  background: rgba(155, 89, 182, 0.2);
+  border-color: #9b59b6;
+  color: #bb8fce;
+}
+
 .stats {
   display: flex;
   justify-content: center;
@@ -149,6 +187,99 @@
 .stat strong {
   color: #ffd700;
   font-size: 1.2rem;
+}
+
+/* Winners Log */
+.winners-log {
+  margin-top: 1.5rem;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 12px;
+  padding: 1rem;
+  border: 1px solid rgba(255, 214, 0, 0.2);
+  width: 100%;
+  max-width: 750px;
+}
+
+.main-content.wide-mode .winners-log {
+  max-width: 1200px;
+}
+
+.winners-log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 214, 0, 0.2);
+}
+
+.winners-log-header h3 {
+  color: #ffd700;
+  font-family: 'Fredoka', sans-serif;
+  font-size: 1rem;
+  margin: 0;
+}
+
+.btn-clear-log {
+  background: rgba(255, 99, 71, 0.2);
+  border: none;
+  color: #ff6b6b;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.btn-clear-log:hover {
+  background: rgba(255, 99, 71, 0.4);
+  color: #fff;
+}
+
+.winners-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.winner-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 214, 0, 0.05);
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
+}
+
+.winner-item:last-child {
+  margin-bottom: 0;
+}
+
+.winner-position {
+  color: #ffd700;
+  font-family: 'Fredoka', sans-serif;
+  font-size: 0.9rem;
+  min-width: 30px;
+}
+
+.winner-name {
+  color: #fff;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.9rem;
+  flex: 1;
+}
+
+.winner-time {
+  color: #666;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.75rem;
 }
 
 /* Responsive */

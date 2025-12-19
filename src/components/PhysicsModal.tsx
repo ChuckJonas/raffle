@@ -5,6 +5,7 @@ export interface PhysicsSettings {
   bounce: number;
   friction: number;
   ballRadius: number;
+  pegRadius: number;
   pegRandomness: number;
   initialVelocity: number;
 }
@@ -14,6 +15,7 @@ export const DEFAULT_PHYSICS: PhysicsSettings = {
   bounce: 0.75,
   friction: 0.997,
   ballRadius: 6,
+  pegRadius: 6,
   pegRandomness: 2,
   initialVelocity: 3,
 };
@@ -35,6 +37,7 @@ function generateRandomPhysics(): PhysicsSettings {
     bounce: randomInRange(0.4, 0.85),
     friction: randomInRange(0.985, 0.999),
     ballRadius: Math.round(randomInRange(4, 12)),
+    pegRadius: Math.round(randomInRange(3, 10)),
     pegRandomness: randomInRange(0.5, 4),
     initialVelocity: randomInRange(1, 5),
   };
@@ -129,6 +132,25 @@ export function PhysicsModal({
             />
             <div className="slider-hints">
               <span>Tiny</span>
+              <span>Large</span>
+            </div>
+          </div>
+
+          <div className="slider-group">
+            <label>
+              <span className="slider-label">Peg Size</span>
+              <span className="slider-value">{settings.pegRadius.toFixed(0)}px</span>
+            </label>
+            <input
+              type="range"
+              min="3"
+              max="12"
+              step="1"
+              value={settings.pegRadius}
+              onChange={(e) => handleChange("pegRadius", parseFloat(e.target.value))}
+            />
+            <div className="slider-hints">
+              <span>Small</span>
               <span>Large</span>
             </div>
           </div>
