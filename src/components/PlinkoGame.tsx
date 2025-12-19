@@ -66,8 +66,8 @@ const createBounceSound = (audioContext: AudioContext, velocity: number) => {
   oscillator.stop(audioContext.currentTime + 0.1);
 };
 
-const createWinSound = (audioContext: AudioContext) => {
-  // Play a cheerful winning jingle
+// Simple jingle for test completion
+const createTestCompleteSound = (audioContext: AudioContext) => {
   const notes = [523.25, 659.25, 783.99, 1046.5]; // C5, E5, G5, C6
 
   notes.forEach((freq, i) => {
@@ -90,6 +90,63 @@ const createWinSound = (audioContext: AudioContext) => {
   });
 };
 
+// Exciting fanfare for actual winner!
+const createWinSound = (audioContext: AudioContext) => {
+  const now = audioContext.currentTime;
+
+  // Helper to play a note
+  const playNote = (
+    freq: number,
+    startTime: number,
+    duration: number,
+    volume: number,
+    type: OscillatorType = "sine"
+  ) => {
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, now + startTime);
+
+    gain.gain.setValueAtTime(0, now + startTime);
+    gain.gain.linearRampToValueAtTime(volume, now + startTime + 0.02);
+    gain.gain.setValueAtTime(volume, now + startTime + duration * 0.7);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + startTime + duration);
+
+    osc.connect(gain);
+    gain.connect(audioContext.destination);
+
+    osc.start(now + startTime);
+    osc.stop(now + startTime + duration);
+  };
+
+  // Dramatic rising fanfare pattern
+  // First phrase - ascending excitement
+  playNote(392.0, 0.0, 0.15, 0.12, "square"); // G4
+  playNote(440.0, 0.1, 0.15, 0.12, "square"); // A4
+  playNote(493.88, 0.2, 0.15, 0.12, "square"); // B4
+
+  // Second phrase - higher and brighter
+  playNote(523.25, 0.35, 0.15, 0.15, "square"); // C5
+  playNote(587.33, 0.45, 0.15, 0.15, "square"); // D5
+  playNote(659.25, 0.55, 0.15, 0.15, "square"); // E5
+
+  // Triumphant final chord (C major with octave)
+  playNote(523.25, 0.75, 0.8, 0.15, "sine"); // C5
+  playNote(659.25, 0.75, 0.8, 0.12, "sine"); // E5
+  playNote(783.99, 0.75, 0.8, 0.12, "sine"); // G5
+  playNote(1046.5, 0.75, 0.8, 0.1, "sine"); // C6
+
+  // Bass foundation
+  playNote(130.81, 0.75, 0.8, 0.08, "triangle"); // C3
+  playNote(261.63, 0.75, 0.8, 0.06, "triangle"); // C4
+
+  // Sparkle notes on top
+  playNote(1318.51, 0.85, 0.3, 0.05, "sine"); // E6
+  playNote(1567.98, 0.95, 0.3, 0.04, "sine"); // G6
+  playNote(2093.0, 1.05, 0.4, 0.03, "sine"); // C7
+};
+
 export function PlinkoGame({
   entries,
   shuffledEntries,
@@ -107,6 +164,7 @@ export function PlinkoGame({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ballRef = useRef<Ball | null>(null);
   const ballsRef = useRef<Ball[]>([]); // For test mode - multiple balls
+  const animationStartTimeRef = useRef<number>(0); // Track when animation started for stuck detection
   const animationRef = useRef<number | null>(null);
   const isAnimatingRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
@@ -694,6 +752,46 @@ export function PlinkoGame({
     const ball = ballRef.current;
     const p = physicsRef.current;
 
+    // Check if ball is stuck (taking too long) - force it to land
+    const STUCK_TIMEOUT = 20000; // 20 seconds max
+    if (
+      animationStartTimeRef.current &&
+      Date.now() - animationStartTimeRef.current > STUCK_TIMEOUT
+    ) {
+      // Force the ball to land in current position
+      const canvasW = canvasWidthRef.current;
+      const shuffled = shuffledEntriesRef.current;
+      const currentNumSlots = Math.min(Math.max(shuffled.length, 2), 30);
+      const currentSlotWidth = canvasW / currentNumSlots;
+      const slotIndex = Math.max(
+        0,
+        Math.min(Math.floor(ball.x / currentSlotWidth), currentNumSlots - 1)
+      );
+
+      // Light up the slot
+      onHighlightedSlotChangeRef.current(slotIndex);
+
+      // The winner is whoever is in the slot
+      const landedEntry = shuffled[slotIndex];
+      if (landedEntry) {
+        winnerRef.current = landedEntry;
+        onDisplayedWinnerChangeRef.current(landedEntry.name);
+      }
+
+      // Play win sound and complete
+      if (audioContextRef.current) {
+        createWinSound(audioContextRef.current);
+      }
+      isAnimatingRef.current = false;
+      const winner = winnerRef.current;
+      setTimeout(() => {
+        if (winner) {
+          onCompleteRef.current(winner);
+        }
+      }, 500);
+      return;
+    }
+
     // Apply physics from settings
     ball.vy += p.gravity;
     ball.vx *= p.friction;
@@ -798,10 +896,29 @@ export function PlinkoGame({
     const p = physicsRef.current;
     const canvasW = canvasWidthRef.current;
 
-    // Sound throttle - only play occasional sounds in test mode
-    const soundThrottle = Math.random() < 0.02; // 2% chance
+    const now = Date.now();
+    const STUCK_TIMEOUT = 20000; // 20 seconds max for entire test
 
-    // Update each ball
+    // Check if test has been running too long - force finish any stuck balls
+    if (
+      animationStartTimeRef.current &&
+      now - animationStartTimeRef.current > STUCK_TIMEOUT
+    ) {
+      balls.forEach((ball) => {
+        if (!ball.landed) {
+          // Force land stuck balls in their current slot
+          const currentSlotWidth = canvasW / numSlots;
+          const slotIndex = Math.max(
+            0,
+            Math.min(Math.floor(ball.x / currentSlotWidth), numSlots - 1)
+          );
+          ball.landed = true;
+          ball.landedSlot = slotIndex;
+        }
+      });
+    }
+
+    // Update each ball (no bounce sounds in test mode - too chaotic)
     balls.forEach((ball) => {
       if (ball.landed) return;
 
@@ -823,9 +940,9 @@ export function PlinkoGame({
         ball.vx *= -p.bounce;
       }
 
-      // Check collisions (with throttled sound)
-      checkCollisionFn(ball, soundThrottle);
-      checkDividerFn(ball, soundThrottle);
+      // Check collisions (no sound in test mode)
+      checkCollisionFn(ball, false);
+      checkDividerFn(ball, false);
 
       // Check if ball reached bottom
       const binFloor = CANVAS_HEIGHT - 50 + 30;
@@ -864,9 +981,9 @@ export function PlinkoGame({
         }
       });
 
-      // Play completion sound
+      // Play simple completion sound for test mode
       if (audioContextRef.current) {
-        createWinSound(audioContextRef.current);
+        createTestCompleteSound(audioContextRef.current);
       }
 
       // Call completion callback
@@ -913,6 +1030,7 @@ export function PlinkoGame({
     onDisplayedWinnerChangeRef.current("");
     onHighlightedSlotChangeRef.current(null); // Reset landed slot
     winnerRef.current = null; // Reset winner
+    animationStartTimeRef.current = Date.now(); // Track when animation started
     isAnimatingRef.current = true;
 
     // Start the animation loop
@@ -933,7 +1051,9 @@ export function PlinkoGame({
 
     // Create all balls with positions spread across the board for fair distribution
     const balls: Ball[] = [];
-    // Leave 12% margin on each side to avoid balls falling straight down edges
+
+    // Use a moderate margin to avoid balls falling straight down the edges
+    // 12% margin on each side seems to work well for both modes
     const marginPercent = 0.12;
     const minX = canvasW * marginPercent;
     const maxX = canvasW * (1 - marginPercent);
@@ -941,23 +1061,24 @@ export function PlinkoGame({
 
     for (let i = 0; i < ballCount; i++) {
       // Distribute starting positions uniformly across the valid range
-      // Add some randomness but ensure coverage of the full width
-      const baseX = minX + (i / ballCount) * dropRange; // Spread evenly
-      const randomOffset = (Math.random() - 0.5) * (dropRange / ballCount) * 2; // Small random offset
+      const baseX = minX + (i / ballCount) * dropRange;
+      // Add small random offset to prevent perfectly uniform patterns
+      const randomOffset =
+        (Math.random() - 0.5) * (dropRange / ballCount) * 1.5;
       const startX = Math.max(minX, Math.min(maxX, baseX + randomOffset));
 
-      // Stagger the drop timing by varying starting Y position
-      const startY = 55 - Math.random() * 250; // Start above the canvas
+      // Random initial velocity - purely random, let physics handle distribution
+      const vx = (Math.random() - 0.5) * p.initialVelocity;
 
-      // Random initial velocity - can push ball left or right
-      const vx = (Math.random() - 0.5) * p.initialVelocity * 1.5;
+      // Stagger the drop timing by varying starting Y position
+      const startY = 55 - Math.random() * 250;
 
       balls.push({
         id: i,
         x: startX,
         y: startY,
         vx: vx,
-        vy: 0.3 + Math.random() * 0.5, // Always falling down
+        vy: 0.3 + Math.random() * 0.5,
         landed: false,
       });
     }
@@ -969,6 +1090,7 @@ export function PlinkoGame({
     }
 
     ballsRef.current = balls;
+    animationStartTimeRef.current = Date.now(); // Track when animation started
     isAnimatingRef.current = true;
 
     // Start the test animation loop

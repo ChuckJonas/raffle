@@ -168,6 +168,18 @@
   color: #bb8fce;
 }
 
+.btn-shuffle {
+  background: rgba(52, 152, 219, 0.1);
+  color: #3498db;
+  border: 2px solid rgba(52, 152, 219, 0.3);
+}
+
+.btn-shuffle:hover:not(:disabled) {
+  background: rgba(52, 152, 219, 0.2);
+  border-color: #3498db;
+  color: #5dade2;
+}
+
 .stats {
   display: flex;
   justify-content: center;

@@ -156,9 +156,117 @@
   padding: 2rem;
 }
 
+/* Winner Celebration Effects */
+.winner-celebration {
+  overflow: hidden;
+}
+
+.confetti-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1001;
+}
+
+.confetti-piece {
+  position: absolute;
+  top: -20px;
+  animation: confetti-fall linear forwards;
+  opacity: 0.9;
+}
+
+.confetti-square {
+  border-radius: 2px;
+}
+
+.confetti-circle {
+  border-radius: 50%;
+}
+
+@keyframes confetti-fall {
+  0% {
+    top: -20px;
+    opacity: 1;
+    transform: translateX(0) rotateZ(0deg);
+  }
+  25% {
+    transform: translateX(30px) rotateZ(90deg);
+  }
+  50% {
+    transform: translateX(-20px) rotateZ(180deg);
+  }
+  75% {
+    transform: translateX(40px) rotateZ(270deg);
+  }
+  100% {
+    top: 100vh;
+    opacity: 0.3;
+    transform: translateX(10px) rotateZ(360deg);
+  }
+}
+
+/* Disco Lights */
+.disco-lights {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 999;
+  overflow: hidden;
+}
+
+.disco-light {
+  position: absolute;
+  width: 300px;
+  height: 300px;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.4;
+  animation: disco-pulse 2s ease-in-out infinite;
+}
+
+.disco-light-1 {
+  background: radial-gradient(circle, #ff006e, transparent 70%);
+  top: -100px;
+  left: 10%;
+  animation-delay: 0s;
+}
+
+.disco-light-2 {
+  background: radial-gradient(circle, #8338ec, transparent 70%);
+  top: 50%;
+  right: -50px;
+  animation-delay: 0.5s;
+}
+
+.disco-light-3 {
+  background: radial-gradient(circle, #00f5d4, transparent 70%);
+  bottom: -100px;
+  left: 40%;
+  animation-delay: 1s;
+}
+
+@keyframes disco-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.3;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 0.5;
+  }
+}
+
 /* Winner Modal Specific */
 .winner-modal {
   text-align: center;
+  z-index: 1002;
+  position: relative;
 }
 
 .winner-header {

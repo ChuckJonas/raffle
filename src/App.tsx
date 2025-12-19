@@ -91,6 +91,12 @@ function App() {
     setShuffledEntries([]);
   }, []);
 
+  const manualShuffle = useCallback(() => {
+    if (entries.length >= 2) {
+      setShuffledEntries(shuffleArray(entries));
+    }
+  }, [entries]);
+
   const startRaffle = useCallback(() => {
     if (entries.length < 2) return;
     
@@ -177,7 +183,6 @@ function App() {
     <div className="app">
       <header className="header">
         <h1>🎰 RAFFLE ROYALE 🎰</h1>
-        <p className="subtitle">Save of the Month Selector</p>
       </header>
 
       <main className={`main-content ${entries.length > 10 ? 'wide-mode' : ''}`}>
@@ -197,6 +202,14 @@ function App() {
               disabled={entries.length === 0}
             >
               📊 View Counts
+            </button>
+            
+            <button 
+              className="btn btn-shuffle"
+              onClick={manualShuffle}
+              disabled={isPlaying || entries.length < 2}
+            >
+              🔀 Shuffle
             </button>
             
             <button 
